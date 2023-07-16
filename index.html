@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Detecting Emotion in Text: Chatbots in the Browser with TensorFlow.js</title>
+        <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.0.0/dist/tf.min.js"></script>
+    </head>
+    <body>
+        <input type="text" id="userInput" placeholder="Enter a sentence..."><br>
+        <button onclick="predictEmotion()">Predict Emotion</button>
+        <p id="text"></p>
+        <h1 id="status">Loading...</h1>
+        <script>
+          const emotions = [
+            "anger", "annoyance",
+            "confusion", "curiosity", "desire", "disappointment", "disapproval","embarrassment", 
+            "joy", "love" , "sadness", "surprise", "neutral"
+          ];
+
+          function setText(text) {
+              document.getElementById("status").innerText = text; 
+          }
+
+          let model;
+          let wordReference;
+          let allWords;
+
+          async function loadData() {
+
+            let data = await fetch("web/emotions.tsv").then(r => r.text());
+            let lines = data.split("\n").filter(x => !!x);
+
+            let bagOfWords = {};
+            allWords = [];
+            wordReference = {};
+
+            lines.forEach(line => {
+                let sentence = line.split("\t")[0];
+                let words = sentence.replace(/[^a-z ]/gi, "").toLowerCase().split(" ").filter(x => !!x);
+                words.forEach(w => {
+                    if(!bagOfWords[w]) {
+                        bagOfWords[w] = 0;
+                    }
+                    bagOfWords[w]++;
+                });
+            });
+
+            allWords = Object.keys(bagOfWords);
+            allWords.forEach((w, i) => {
+                wordReference[w] = i;
+            });
+
+            let vectors = lines.map(line => {
+                let sentence = line.split("\t")[0];
+                let vector = new Array(allWords.length).fill(0);
+                let words = sentence.replace(/[^a-z ]/gi, "").toLowerCase().split(" ").filter(x => !!x);
+                words.forEach(w => {
+                    if(w in wordReference) {
+                        vector[wordReference[w]] = 1;
+                    }
+                });
+                return vector;
+            });
+
+            model = tf.sequential();
+            model.add(tf.layers.dense({ units: 100, activation: 'relu', inputShape: [allWords.length] }));
+            model.add(tf.layers.dense({ units: 50, activation: 'relu' }));
+            model.add(tf.layers.dense({ units: 25, activation: 'relu' }));
+            model.add(tf.layers.dense({ units: emotions.length, activation: 'softmax' }));
+
+            model.compile({ loss: 'categoricalCrossentropy', optimizer: tf.train.adam(), metrics: ['accuracy'] });
+
+            let xs, ys;
+            xs = tf.tensor2d(vectors);
+            let outputs = lines.map(line => {
+                let cats = line.split("\t")[1].split(",").map(x => parseInt(x));
+                let output = [];
+                for(let i = 0; i < emotions.length; i++) {
+                    output.push(cats.includes(i) ? 1 : 0);
+                }
+                return output;
+            });
+            ys = tf.tensor2d(outputs);
+            await model.fit(xs, ys, { epochs: 50, shuffle: true, 
+                callbacks: { 
+                    onEpochEnd: (epoch, log) => console.log(`Epoch ${epoch}: loss = ${log.loss}`)
+                }
+            });
+            setText("Model is ready. You can now predict emotions.");
+          }
+
+          async function predictEmotion() {
+            let userInput = document.getElementById("userInput").value;
+            let vector = new Array(allWords.length).fill(0);
+            let words = userInput.replace(/[^a-z ]/gi, "").toLowerCase().split(" ").filter(x => !!x);
+            words.forEach(w => {
+                if(w in wordReference) {
+                    vector[wordReference[w]] = 1;
+                }
+            });
+            let prediction = await model.predict(tf.tensor2d([vector])).data();
+            let maxPredict = Math.max(...prediction);
+            let predictedEmotion = emotions[prediction.indexOf(maxPredict)];
+            setText(`Predicted Emotion: ${predictedEmotion}`);
+          }
+
+          window.onload = function() {
+            loadData();
+          }
+        </script>
+    </body>
+</html>
